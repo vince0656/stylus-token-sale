@@ -23,6 +23,10 @@ sol_interface! {
         function transfer(address, uint256) external returns (bool);
         function transferFrom(address, address, uint256) external returns (bool);
     }
+
+    interface IERC721 {
+        function ownerOf(uint256) external returns (address);
+    }
 }
 
 // Define some persistent storage using the Solidity ABI.
@@ -65,12 +69,14 @@ sol! {
     error VestingNotEnabled();
     error NoTokensVested();
     error AlreadyTokenized();
+    error AllTokensClaimed();
 
     /// ******
     /// Events
     /// ******
     event TokensPurchased(address indexed user, uint256 amount);
     event TokenizedVestingEnabled(address indexed user, uint256 indexed nft_token_id);
+    event TokensClaimed(address indexed user, address indexed recipient, uint256 amount);
 }
 
 #[derive(SolidityError)]
@@ -85,7 +91,8 @@ pub enum Errors {
     SoldOut(SoldOut),
     VestingNotEnabled(VestingNotEnabled),
     NoTokensVested(NoTokensVested),
-    AlreadyTokenized(AlreadyTokenized)
+    AlreadyTokenized(AlreadyTokenized),
+    AllTokensClaimed(AllTokensClaimed)
 }
 
 // 100% defined to 3 decimal places
@@ -183,9 +190,7 @@ impl TokenSaleWithTokenizedVesting {
 
     pub fn enable_tokenized_vesting(&mut self, token_id: U256) -> Result<(), Errors> {
         // Validate whether it is possible to enable tokenized vesting
-        if self.total_vesting_length_in_seconds.get() == U256::ZERO {
-            return Err(Errors::VestingNotEnabled(VestingNotEnabled {}))
-        }
+        let _ = self.validate_vesting_enabled()?;
 
         let tokens_purchased_by_user = self.tokens_purchased.get(msg::sender());
         if tokens_purchased_by_user == U256::ZERO {
@@ -212,6 +217,20 @@ impl TokenSaleWithTokenizedVesting {
         });
         
         Ok(())
+    }
+ 
+    pub fn claim_tokens(&mut self) -> Result<(), Errors> {
+        let nft_claim_token_id = self.nft_claim_token_id.get(msg::sender());
+        if nft_claim_token_id != U256::ZERO {
+            return Err(Errors::AlreadyTokenized(AlreadyTokenized {}))
+        }
+
+        self.claim_tokens_from_user(msg::sender(), msg::sender())
+    }
+
+    pub fn claim_tokens_by_nft(&mut self, user: Address) -> Result<(), Errors> {
+        self.validate_sender_owns_nft(self.nft_claim_token_id.get(user))?;
+        self.claim_tokens_from_user(user, msg::sender())
     }
 
     /// ******
@@ -300,6 +319,88 @@ impl TokenSaleWithTokenizedVesting {
         if vesting_length != U256::ZERO && percentage_unlocked > U256::from(ONE_HUNDRED_PERCENT) {
             return Err(Errors::InvalidPercentage(InvalidPercentage {}))
         }
+
+        Ok(())
+    }
+
+    pub fn validate_vesting_enabled(&self) -> Result<U256, Errors> {
+        let total_vesting_length_in_seconds = self.total_vesting_length_in_seconds.get();
+        if total_vesting_length_in_seconds == U256::ZERO {
+            return Err(Errors::VestingNotEnabled(VestingNotEnabled {}))
+        }
+
+        Ok(total_vesting_length_in_seconds)
+    }
+
+    // Ensure caller is the owner of a token
+    pub fn validate_sender_owns_nft(&mut self, token_id: U256) -> Result<(), Errors> {
+        let owner = IERC721::from(IERC721 {address: self.nft_claim.get()}).owner_of(self, token_id).unwrap();
+        if owner != msg::sender() {
+            return Err(Errors::OnlyOwner(OnlyOwner {}))
+        }
+
+        Ok(())
+    }
+
+    pub fn claim_tokens_from_user(
+        &mut self, 
+        user: Address, 
+        recipient: Address
+    ) -> Result<(), Errors> {
+        // Check whether tokens are vested by anyone purchasing
+        let total_vesting_length_in_seconds = self.validate_vesting_enabled()?;
+
+        // Check whether the user purchased any tokens
+        let tokens_purchased_by_user = self.tokens_purchased.get(user);
+        if tokens_purchased_by_user == U256::ZERO {
+            return Err(Errors::NoTokensVested(NoTokensVested {}))
+        }
+
+        // Check when the last claim happened
+        let tokens_purchased_at = self.tokens_purchased_at.get(user);
+        let tokens_claimed_by_user = self.tokens_claimed.get(user);
+        let mut last_user_claim_timestamp = self.tokens_claimed_at.get(user);
+        if tokens_claimed_by_user == U256::ZERO {
+            last_user_claim_timestamp = tokens_purchased_at;
+        }
+
+        // Check they have not claimed everything
+        if tokens_claimed_by_user == tokens_purchased_by_user {
+            return Err(Errors::AllTokensClaimed(AllTokensClaimed {}))
+        }
+
+        let current_time = U256::from(block::timestamp());
+        let last_token_claim_at = tokens_purchased_at + total_vesting_length_in_seconds;
+        let mut tokens_claimed_setter = self.tokens_claimed.setter(user);
+        let mut tokens_claimed_at_setter = self.tokens_claimed_at.setter(user);
+        let mut amount = U256::from(0);
+        if current_time >= last_token_claim_at {
+            amount = tokens_purchased_by_user - tokens_claimed_by_user;
+            tokens_claimed_setter.set(tokens_purchased_by_user);
+            tokens_claimed_at_setter.set(last_token_claim_at);
+            let _ = IERC20::from(IERC20 {address: self.token.get()}).transfer(
+                self,
+                recipient,
+                amount
+            );
+        } else {
+            let time_since_last_claim = current_time - last_user_claim_timestamp;
+            let tokens_per_second_to_claim = ((tokens_purchased_by_user * U256::from(1e12)) / total_vesting_length_in_seconds) / U256::from(1e12);
+            amount = time_since_last_claim * tokens_per_second_to_claim;
+            tokens_claimed_setter.set(tokens_claimed_by_user + amount);
+            tokens_claimed_at_setter.set(current_time);
+            let _ = IERC20::from(IERC20 {address: self.token.get()}).transfer(
+                self,
+                recipient,
+                amount
+            );
+        }
+
+        evm::log(TokensClaimed {
+            user,
+            recipient,
+            amount
+        });
 
         Ok(())
     }
