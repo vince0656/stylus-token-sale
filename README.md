@@ -151,21 +151,21 @@ The CLI will send 2 transactions to deploy and activate your program onchain.
 ```bash
 stripped custom section from user wasm to remove any sensitive data
 contract size: 24.3 KB
-wasm size: 82.9 KB
+wasm size: 83.2 KB
 File used for deployment hash: ./Cargo.lock
 File used for deployment hash: ./Cargo.toml
 File used for deployment hash: ./rust-toolchain.toml
 File used for deployment hash: ./src/lib.rs
 File used for deployment hash: ./src/main.rs
-project metadata hash computed on deployment: "c41f2c4525d400bdca688225863a4167cb7b450c03da8a859c52e7eaad309e51"
+project metadata hash computed on deployment: "1060734da220525bb26927b4b88473d9906591398c3943b63b93f97c8ed09e21"
 stripped custom section from user wasm to remove any sensitive data
 contract size: 24.3 KB
 wasm data fee: 0.000114 ETH
-deployed code at address: 0xd0f2f3605addefacf83b91197a07aa57c7a7574f
-deployment tx hash: 0x4427ced3289d351195e0a1174f569ed18899aeaa2ca3076c4b05a95c404ba25a
-contract activated and ready onchain with tx hash: 0x5a0fd1d3741416dab64667837860d4fbf15ef41535ad3949b2ec02c3b0d8d521
+deployed code at address: 0x577341b4b35cef9a9dce44b54ae460e9c9b4653e
+deployment tx hash: 0xd3c014996f93cb1b6c9b0c8389f2554d78bd856aee5aa6d10cccd2153f1b0aef
+contract activated and ready onchain with tx hash: 0xa0840b6b7bfe2a54022fe7d2cb6149aeaff97e1587698f7fcd7f1b1861e9dbc9
 
-NOTE: We recommend running cargo stylus cache bid d0f2f3605addefacf83b91197a07aa57c7a7574f 0 to cache your activated contract in ArbOS.
+NOTE: We recommend running cargo stylus cache bid 577341b4b35cef9a9dce44b54ae460e9c9b4653e 0 to cache your activated contract in ArbOS.
 Cached contracts benefit from cheaper calls. To read more about the Stylus contract cache, see
 https://docs.arbitrum.io/stylus/concepts/stylus-cache-manager
 ```
