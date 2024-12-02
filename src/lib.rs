@@ -5,7 +5,7 @@
 // Allow `cargo stylus export-abi` to generate a main function.
 #![cfg_attr(not(feature = "export-abi"), no_main)]
 
-extern crate alloc; // Link alloc to access Vec
+extern crate alloc;
 
 use alloy_sol_types::sol; // Define errors and interfaces
 use stylus_sdk::{
@@ -13,7 +13,6 @@ use stylus_sdk::{
     prelude::*, // Contains common traits and macros.
     block,      // Includes block::timestamp
     msg,        // Access msg::sender
-    contract,   // Access global smart contract info
     evm         // Events
 };
 
@@ -56,6 +55,7 @@ sol! {
     /// Errors
     /// ******
 
+    error NotInitialized();
     error AlreadyInitialized();
     error OnlyOwner();
     error ZeroValueArgumentInjected();
@@ -79,9 +79,11 @@ sol! {
     event TokensClaimed(address indexed user, address indexed recipient, uint256 amount);
 }
 
+/// Exporting Solidity errors defined in sol! as Rust enums
 #[derive(SolidityError)]
 pub enum Errors {
     OnlyOwner(OnlyOwner),
+    NotInitialized(NotInitialized),
     AlreadyInitialized(AlreadyInitialized),
     ZeroValueArgumentInjected(ZeroValueArgumentInjected),
     InvalidPercentage(InvalidPercentage),
@@ -97,20 +99,26 @@ pub enum Errors {
     TokensAreVested(TokensAreVested)
 }
 
-// One day defined in seconds as the minimum vesting length if applicable
+/// One day defined in seconds as the minimum vesting length if applicable
 const MIN_VESTING_LENGTH: i32 = 86_400;
 
-// 365 days defined in seconds as the maximum vesting length if applicable
+/// 365 days defined in seconds as the maximum vesting length if applicable
 const MAX_VESTING_LENGTH: i32 = 31_536_000;
 
 /// External methods for `TokenSaleWithTokenizedVesting`
 #[public]
 impl TokenSaleWithTokenizedVesting {
 
-    /// ******
-    /// Init
-    /// ******
-
+    /// Initialize the smart contract
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The address of the ERC20 being sold
+    /// * `currency` - The address of the ERC 20 payment token
+    /// * `price_per_token` - Price in the currency per token being purchased
+    /// * `total_tokens_available` - Total number of tokens available for purchase
+    /// * `total_vesting_length_in_seconds` - If vesting is to be enabled, specify the vesting length
+    /// * `nft_claim` - Address of the ERC721 smart contract that can tokenize vesting if available
     pub fn init(
         &mut self,
         token: Address,
@@ -146,7 +154,15 @@ impl TokenSaleWithTokenizedVesting {
     /// User
     /// ******
 
+    /// Main entry point for users to buy tokens
+    ///
+    /// # Arguments
+    ///
+    /// * `amount` - Number of tokens being purchase which will calculate cost
     pub fn purchase_tokens(&mut self, amount: U256) -> Result<(), Errors> {
+        // No need to proceed if the contract is not yet initialized
+        self.validate_is_initialized()?;
+
         // For simplicity on vesting, we only let the address buy a token allocation once. They can create other addresses if they want more
         let tokens_purchased_by_user = self.tokens_purchased.get(msg::sender());
         if tokens_purchased_by_user > U256::ZERO {
@@ -160,18 +176,17 @@ impl TokenSaleWithTokenizedVesting {
         }
 
         // Record how many tokens user is buying and when they bought it
-        let mut tokens_purchased = self.tokens_purchased.setter(msg::sender());
-        let mut tokens_purchased_at = self.tokens_purchased_at.setter(msg::sender());
-        tokens_purchased.set(amount);
-        tokens_purchased_at.set(U256::from(block::timestamp()));
+        self.tokens_purchased.setter(msg::sender()).set(amount);
+        self.tokens_purchased_at.setter(msg::sender()).set(U256::from(block::timestamp()));
         self.total_tokens_purchased.set(total_tokens_purchased + amount);
 
         // Take payment for the tokens
         let cost = amount * self.price_per_token.get();
+        let owner = self.owner.get();
         let _ = IERC20::from(IERC20 {address: self.currency.get()}).transfer_from(
             self,
             msg::sender(), 
-            contract::address(),
+            owner,
             cost
         );
 
@@ -184,6 +199,11 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
+    /// Allows a user that purchased tokens to nominate an NFT that is allowed to claim vested tokens if applicable
+    ///
+    /// # Arguments
+    ///
+    /// * `token_id` - The token that can claim vested tokens regardless of its future owner
     pub fn enable_tokenized_vesting(&mut self, token_id: U256) -> Result<(), Errors> {
         // Validate whether it is possible to enable tokenized vesting
         let _ = self.validate_vesting_enabled()?;
@@ -219,6 +239,7 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
  
+    /// Allow a user to claim vested tokens as long as it is active and not tokenized
     pub fn claim_tokens(&mut self) -> Result<(), Errors> {
         let nft_claim_token_id = self.nft_claim_token_id.get(msg::sender());
         if nft_claim_token_id != U256::ZERO {
@@ -228,11 +249,13 @@ impl TokenSaleWithTokenizedVesting {
         self.claim_tokens_from_user(msg::sender(), msg::sender())
     }
 
+    /// If tokenized vesting is enabled, then allow the owner of the NFT to claim the vested tokens
     pub fn claim_tokens_by_nft(&mut self, user: Address) -> Result<(), Errors> {
         self.validate_sender_owns_nft(self.nft_claim_token_id.get(user))?;
         self.claim_tokens_from_user(user, msg::sender())
     }
 
+    /// When vesting is not enabled, allow the purchaser of tokens to claim all of the unlocked tokens
     pub fn claim_unlocked_tokens(&mut self) -> Result<(), Errors> {
         // This function is only for token sales that have no vesting
         if self.total_vesting_length_in_seconds.get() != U256::ZERO {
@@ -274,6 +297,7 @@ impl TokenSaleWithTokenizedVesting {
     /// Owner
     /// ******
 
+    /// Allow the owner to update the price of the token
     pub fn update_price_per_token(&mut self, new_price_per_token: U256) -> Result<(), Errors> {
         self.validate_sender_is_owner()?;
         self.validate_price_per_token(new_price_per_token)?;
@@ -292,7 +316,16 @@ impl TokenSaleWithTokenizedVesting {
 
 // Internal methods for `TokenSaleWithTokenizedVesting`
 impl TokenSaleWithTokenizedVesting {
-    /// Internal function ensuring we are not already initialized
+    /// Function ensuring we are initialized
+    pub fn validate_is_initialized(&self) -> Result<(), Errors> {
+        if !self.initialized.get() {
+            return Err(Errors::NotInitialized(NotInitialized {}))
+        }
+
+        Ok(())
+    }
+
+    /// Function ensuring we are not already initialized
     pub fn validate_initialization(&self) -> Result<(), Errors> {
         if self.initialized.get() {
             return Err(Errors::AlreadyInitialized(AlreadyInitialized {}))
@@ -321,7 +354,7 @@ impl TokenSaleWithTokenizedVesting {
 
     /// Function ensuring that a zero value is not supplied for an address
     pub fn validate_address(&self, value: Address) -> Result<(), Errors> {
-        if value == Address::ZERO {
+        if value == Address::default() {
             return Err(Errors::ZeroValueArgumentInjected(ZeroValueArgumentInjected {}))
         }
 
