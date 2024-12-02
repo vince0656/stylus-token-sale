@@ -41,7 +41,6 @@ sol_storage! {
         uint256 price_per_token;                        // Price per token being purchased
         uint256 total_tokens_available;                 // Total number of tokens available for purchase
         uint256 total_vesting_length_in_seconds;        // Non-zero if tokens must be vested to buyer
-        uint256 percentage_unlocked_on_purchase;        // If tokens need to be vested, what percentage is instantly redeemable 
         address nft_claim;                              // Address of the NFT contract that can tokenise vesting
         uint256 total_tokens_purchased;                 // Total number of tokens purchased accross all users
         mapping(address => uint256) tokens_purchased;   // Tracking how many tokens a user has bought
@@ -95,9 +94,6 @@ pub enum Errors {
     AllTokensClaimed(AllTokensClaimed)
 }
 
-// 100% defined to 3 decimal places
-const ONE_HUNDRED_PERCENT: i32 = 100_000;
-
 // One day defined in seconds as the minimum vesting length if applicable
 const MIN_VESTING_LENGTH: i32 = 86_400;
 
@@ -119,7 +115,6 @@ impl TokenSaleWithTokenizedVesting {
         price_per_token: U256,
         total_tokens_available: U256,
         total_vesting_length_in_seconds: U256,
-        percentage_unlocked_on_purchase: U256,
         nft_claim: Address,
     ) -> Result<(), Errors> {
         // Perform required validation
@@ -129,7 +124,6 @@ impl TokenSaleWithTokenizedVesting {
         self.validate_address(currency)?;
         self.validate_total_tokens_for_sale(total_tokens_available)?;
         self.validate_vesting_length(total_vesting_length_in_seconds)?;
-        self.validate_percentage_unlocked(total_vesting_length_in_seconds, percentage_unlocked_on_purchase)?;
         self.validate_address(nft_claim)?;
 
         // Setup the smart contract by configuring storage
@@ -140,7 +134,6 @@ impl TokenSaleWithTokenizedVesting {
         self.price_per_token.set(price_per_token);
         self.total_tokens_available.set(total_tokens_available);
         self.total_vesting_length_in_seconds.set(total_vesting_length_in_seconds);
-        self.percentage_unlocked_on_purchase.set(percentage_unlocked_on_purchase);
         self.nft_claim.set(nft_claim);
 
         Ok(())
@@ -233,6 +226,8 @@ impl TokenSaleWithTokenizedVesting {
         self.claim_tokens_from_user(user, msg::sender())
     }
 
+    // todo - claim unlocked
+
     /// ******
     /// Owner
     /// ******
@@ -314,15 +309,7 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
-    // Ensure percentage defined is not more than 100%
-    pub fn validate_percentage_unlocked(&self, vesting_length: U256, percentage_unlocked: U256) -> Result<(), Errors> {
-        if vesting_length != U256::ZERO && percentage_unlocked > U256::from(ONE_HUNDRED_PERCENT) {
-            return Err(Errors::InvalidPercentage(InvalidPercentage {}))
-        }
-
-        Ok(())
-    }
-
+    // For required methods only proceed if vesting is enabled returning the vesting length in seconds
     pub fn validate_vesting_enabled(&self) -> Result<U256, Errors> {
         let total_vesting_length_in_seconds = self.total_vesting_length_in_seconds.get();
         if total_vesting_length_in_seconds == U256::ZERO {
@@ -342,6 +329,7 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
+    // Logic for performing a claim of tokens if the tokens are vested, releasing a tranche since the last timestamp
     pub fn claim_tokens_from_user(
         &mut self, 
         user: Address, 
@@ -369,33 +357,39 @@ impl TokenSaleWithTokenizedVesting {
             return Err(Errors::AllTokensClaimed(AllTokensClaimed {}))
         }
 
+        // Calculate how many tokens to release 
         let current_time = U256::from(block::timestamp());
         let last_token_claim_at = tokens_purchased_at + total_vesting_length_in_seconds;
         let mut tokens_claimed_setter = self.tokens_claimed.setter(user);
         let mut tokens_claimed_at_setter = self.tokens_claimed_at.setter(user);
-        let mut amount = U256::from(0);
-        if current_time >= last_token_claim_at {
-            amount = tokens_purchased_by_user - tokens_claimed_by_user;
+        let amount: U256 = if current_time >= last_token_claim_at {
+            // Update the claim amount and last claim timestamp which is upperbound to the end
             tokens_claimed_setter.set(tokens_purchased_by_user);
             tokens_claimed_at_setter.set(last_token_claim_at);
-            let _ = IERC20::from(IERC20 {address: self.token.get()}).transfer(
-                self,
-                recipient,
-                amount
-            );
+
+            // Amount to transfer will be all remaining tokens
+            tokens_purchased_by_user - tokens_claimed_by_user
         } else {
+            // Amount to transfer will be based on how many have unlocked since the last claim
             let time_since_last_claim = current_time - last_user_claim_timestamp;
             let tokens_per_second_to_claim = ((tokens_purchased_by_user * U256::from(1e12)) / total_vesting_length_in_seconds) / U256::from(1e12);
-            amount = time_since_last_claim * tokens_per_second_to_claim;
-            tokens_claimed_setter.set(tokens_claimed_by_user + amount);
+            let transfer_amount: U256 = time_since_last_claim * tokens_per_second_to_claim;
+            
+            // Update the total claimed by the user and the current timestamp
+            tokens_claimed_setter.set(tokens_claimed_by_user + transfer_amount);
             tokens_claimed_at_setter.set(current_time);
-            let _ = IERC20::from(IERC20 {address: self.token.get()}).transfer(
-                self,
-                recipient,
-                amount
-            );
-        }
 
+            transfer_amount
+        };
+
+        // Transfer the unlocked tokens to the target recipient
+        let _ = IERC20::from(IERC20 {address: self.token.get()}).transfer(
+            self,
+            recipient,
+            amount
+        );
+
+        // Log the amount of tokens received and distinguish between who paid and who is receiving the tokens
         evm::log(TokensClaimed {
             user,
             recipient,
