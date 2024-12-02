@@ -12,7 +12,6 @@ use stylus_sdk::{
     alloy_primitives::{U256, Address},
     prelude::*, // Contains common traits and macros.
     block,      // Includes block::timestamp
-    console,    // For Debug purposes. Todo remove
     msg,        // Access msg::sender
     contract,   // Access global smart contract info
     evm         // Events
