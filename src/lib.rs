@@ -1,6 +1,6 @@
+//! Fixed-cost token sale contract that focuses on total number of tokens being sold and offers optional linear vesting of tokens (without cliff or instant unlock support)
+//! If token vesting is enabled, users can tokenize the claim of tokens in an NFT allowing the owner of the NFT to have exclusivity on claiming the remaining unlocks (if applicable)
 //! The program is ABI-equivalent with Solidity, which means you can call it from both Solidity and Rust. To do this, run `cargo stylus export-abi`.
-
-// TODO - natspec
 
 // Allow `cargo stylus export-abi` to generate a main function.
 #![cfg_attr(not(feature = "export-abi"), no_main)]
@@ -67,8 +67,10 @@ sol! {
     error SoldOut();
     error VestingNotEnabled();
     error NoTokensVested();
+    error NoTokensPurchased();
     error AlreadyTokenized();
     error AllTokensClaimed();
+    error TokensAreVested();
 
     /// ******
     /// Events
@@ -90,8 +92,10 @@ pub enum Errors {
     SoldOut(SoldOut),
     VestingNotEnabled(VestingNotEnabled),
     NoTokensVested(NoTokensVested),
+    NoTokensPurchased(NoTokensPurchased),
     AlreadyTokenized(AlreadyTokenized),
-    AllTokensClaimed(AllTokensClaimed)
+    AllTokensClaimed(AllTokensClaimed),
+    TokensAreVested(TokensAreVested)
 }
 
 // One day defined in seconds as the minimum vesting length if applicable
@@ -198,10 +202,14 @@ impl TokenSaleWithTokenizedVesting {
         if token_id == U256::ZERO {
             return Err(Errors::ZeroValueArgumentInjected(ZeroValueArgumentInjected {}))
         }
+        
+        // Check they have not claimed everything
+        if self.tokens_claimed.get(msg::sender()) == tokens_purchased_by_user {
+            return Err(Errors::AllTokensClaimed(AllTokensClaimed {}))
+        }
 
         // Record the NFT that tokenized the vesting so that its owner can start claiming tokens
-        let mut claim_token_id_setter = self.nft_claim_token_id.setter(msg::sender());
-        claim_token_id_setter.set(token_id);
+        self.nft_claim_token_id.setter(msg::sender()).set(token_id);
 
         // Log the vesting being enabled and conclude the transaction
         evm::log(TokenizedVestingEnabled {
@@ -226,7 +234,42 @@ impl TokenSaleWithTokenizedVesting {
         self.claim_tokens_from_user(user, msg::sender())
     }
 
-    // todo - claim unlocked
+    pub fn claim_unlocked_tokens(&mut self) -> Result<(), Errors> {
+        // This function is only for token sales that have no vesting
+        if self.total_vesting_length_in_seconds.get() != U256::ZERO {
+            return Err(Errors::TokensAreVested(TokensAreVested {}))
+        }
+
+        // Ensure the user has not claimed anything
+        if self.tokens_claimed.get(msg::sender()) != U256::ZERO {
+            return Err(Errors::AllTokensClaimed(AllTokensClaimed {}))
+        }
+
+        // Record the claim in state
+        let tokens_purchased = self.tokens_purchased.get(msg::sender());
+        if tokens_purchased == U256::ZERO {
+            return Err(Errors::NoTokensPurchased(NoTokensPurchased {}))
+        }
+
+        self.tokens_claimed.setter(msg::sender()).set(tokens_purchased);
+        self.tokens_claimed_at.setter(msg::sender()).set(U256::from(block::timestamp()));
+
+        // Send the user all the tokens that they purchased
+        let _ = IERC20::from(IERC20 {address: self.token.get()}).transfer(
+            self,
+            msg::sender(),
+            tokens_purchased
+        );
+
+        // Log the amount of tokens sent and conclude the transaction
+        evm::log(TokensClaimed {
+            user: msg::sender(),
+            recipient: msg::sender(),
+            amount: tokens_purchased
+        });
+
+        Ok(())
+    }
 
     /// ******
     /// Owner
@@ -250,7 +293,7 @@ impl TokenSaleWithTokenizedVesting {
 
 // Internal methods for `TokenSaleWithTokenizedVesting`
 impl TokenSaleWithTokenizedVesting {
-    // Ensure we are not already initialized
+    /// Internal function ensuring we are not already initialized
     pub fn validate_initialization(&self) -> Result<(), Errors> {
         if self.initialized.get() {
             return Err(Errors::AlreadyInitialized(AlreadyInitialized {}))
@@ -259,7 +302,7 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
-    // Ensure sender is owner
+    /// Function ensuring sender is owner of the smart contract (simple ownership)
     pub fn validate_sender_is_owner(&self) -> Result<(), Errors> {
         if msg::sender() != self.owner.get() {
             return Err(Errors::OnlyOwner(OnlyOwner {}))
@@ -268,7 +311,7 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
-    // Ensure a zero price is not supplied
+    /// Function ensuring a zero price is not supplied to the smart contract
     pub fn validate_price_per_token(&self, price_per_token: U256) -> Result<(), Errors> {
         if price_per_token == U256::ZERO {
             return Err(Errors::ZeroValueArgumentInjected(ZeroValueArgumentInjected {}))
@@ -277,7 +320,7 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
-    // Ensure a zero value is not supplied
+    /// Function ensuring that a zero value is not supplied for an address
     pub fn validate_address(&self, value: Address) -> Result<(), Errors> {
         if value == Address::ZERO {
             return Err(Errors::ZeroValueArgumentInjected(ZeroValueArgumentInjected {}))
@@ -286,6 +329,7 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
+    /// Function ensuring that total number of tokens being sold is not zero
     pub fn validate_total_tokens_for_sale(&self, total_tokens: U256) -> Result<(), Errors> {
         if total_tokens == U256::ZERO {
             return Err(Errors::ZeroValueArgumentInjected(ZeroValueArgumentInjected {}))
@@ -294,7 +338,7 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
-    // Ensure vesting length is not zero and a sensible length
+    /// Function ensuring that when vesting length is not zero, it is a sensible length for users of the smart contract
     pub fn validate_vesting_length(&self, vesting_length: U256) -> Result<(), Errors> {
         if vesting_length != U256::ZERO {
             if vesting_length < U256::from(MIN_VESTING_LENGTH) {
@@ -309,7 +353,7 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
-    // For required methods only proceed if vesting is enabled returning the vesting length in seconds
+    /// Function ensuring that we only proceed if vesting is enabled returning the vesting length in seconds
     pub fn validate_vesting_enabled(&self) -> Result<U256, Errors> {
         let total_vesting_length_in_seconds = self.total_vesting_length_in_seconds.get();
         if total_vesting_length_in_seconds == U256::ZERO {
@@ -319,7 +363,7 @@ impl TokenSaleWithTokenizedVesting {
         Ok(total_vesting_length_in_seconds)
     }
 
-    // Ensure caller is the owner of a token
+    /// Function ensuring msg.sender is the owner of a ERC721 token
     pub fn validate_sender_owns_nft(&mut self, token_id: U256) -> Result<(), Errors> {
         let owner = IERC721::from(IERC721 {address: self.nft_claim.get()}).owner_of(self, token_id).unwrap();
         if owner != msg::sender() {
@@ -329,7 +373,12 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
-    // Logic for performing a claim of tokens if the tokens are vested, releasing a tranche since the last timestamp
+    /// Logic for performing a claim of tokens if the tokens are vested, releasing a tranche since the last timestamp
+    ///
+    /// # Arguments
+    ///
+    /// * `user` - The Ethereum wallet address of the user that purchased tokens
+    /// * `recipient` - The Ethereum wallet address which will receive unlocked tokens which can be different from the user
     pub fn claim_tokens_from_user(
         &mut self, 
         user: Address, 
