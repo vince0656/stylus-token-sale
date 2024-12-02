@@ -51,10 +51,6 @@ sol_storage! {
 
 // Declare events and Solidity error types
 sol! {
-    /// ******
-    /// Errors
-    /// ******
-
     error NotInitialized();
     error AlreadyInitialized();
     error OnlyOwner();
@@ -71,9 +67,6 @@ sol! {
     error AllTokensClaimed();
     error TokensAreVested();
 
-    /// ******
-    /// Events
-    /// ******
     event TokensPurchased(address indexed user, uint256 amount);
     event TokenizedVestingEnabled(address indexed user, uint256 indexed nft_token_id);
     event TokensClaimed(address indexed user, address indexed recipient, uint256 amount);
@@ -149,10 +142,6 @@ impl TokenSaleWithTokenizedVesting {
 
         Ok(())
     }
-
-    /// ******
-    /// User
-    /// ******
 
     /// Main entry point for users to buy tokens
     ///
@@ -293,23 +282,11 @@ impl TokenSaleWithTokenizedVesting {
         Ok(())
     }
 
-    /// ******
-    /// Owner
-    /// ******
-
     /// Allow the owner to update the price of the token
     pub fn update_price_per_token(&mut self, new_price_per_token: U256) -> Result<(), Errors> {
         self.validate_sender_is_owner()?;
         self.validate_price_per_token(new_price_per_token)?;
         Ok(())
-    }
-
-    /// ******
-    /// View
-    /// ******
-
-    pub fn owner(&self) -> Address {
-        self.owner.get()
     }
 
 }
