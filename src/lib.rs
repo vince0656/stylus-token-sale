@@ -172,12 +172,12 @@ impl TokenSaleWithTokenizedVesting {
         // Take payment for the tokens
         let cost = amount * self.price_per_token.get();
         let owner = self.owner.get();
-        let _ = IERC20::from(IERC20 {address: self.currency.get()}).transfer_from(
+        IERC20::from(IERC20 {address: self.currency.get()}).transfer_from(
             self,
             msg::sender(), 
             owner,
             cost
-        );
+        ).unwrap();
 
         // Log the purchase and conclude the transaction
         evm::log(TokensPurchased {
@@ -266,11 +266,11 @@ impl TokenSaleWithTokenizedVesting {
         self.tokens_claimed_at.setter(msg::sender()).set(U256::from(block::timestamp()));
 
         // Send the user all the tokens that they purchased
-        let _ = IERC20::from(IERC20 {address: self.token.get()}).transfer(
+        IERC20::from(IERC20 {address: self.token.get()}).transfer(
             self,
             msg::sender(),
             tokens_purchased
-        );
+        ).unwrap();
 
         // Log the amount of tokens sent and conclude the transaction
         evm::log(TokensClaimed {
@@ -441,11 +441,11 @@ impl TokenSaleWithTokenizedVesting {
         };
 
         // Transfer the unlocked tokens to the target recipient
-        let _ = IERC20::from(IERC20 {address: self.token.get()}).transfer(
+        IERC20::from(IERC20 {address: self.token.get()}).transfer(
             self,
             recipient,
             amount
-        );
+        ).unwrap();
 
         // Log the amount of tokens received and distinguish between who paid and who is receiving the tokens
         evm::log(TokensClaimed {
