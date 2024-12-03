@@ -66,6 +66,7 @@ sol! {
     error AlreadyTokenized();
     error AllTokensClaimed();
     error TokensAreVested();
+    error TransferFailed();
 
     event TokensPurchased(address indexed user, uint256 amount);
     event TokenizedVestingEnabled(address indexed user, uint256 indexed nft_token_id);
@@ -89,7 +90,8 @@ pub enum Errors {
     NoTokensPurchased(NoTokensPurchased),
     AlreadyTokenized(AlreadyTokenized),
     AllTokensClaimed(AllTokensClaimed),
-    TokensAreVested(TokensAreVested)
+    TokensAreVested(TokensAreVested),
+    TransferFailed(TransferFailed)
 }
 
 /// One day defined in seconds as the minimum vesting length if applicable
@@ -169,15 +171,9 @@ impl TokenSaleWithTokenizedVesting {
         self.tokens_purchased_at.setter(msg::sender()).set(U256::from(block::timestamp()));
         self.total_tokens_purchased.set(total_tokens_purchased + amount);
 
-        // Take payment for the tokens
+        // calculate cost
         let cost = amount * self.price_per_token.get();
         let owner = self.owner.get();
-        IERC20::from(IERC20 {address: self.currency.get()}).transfer_from(
-            self,
-            msg::sender(), 
-            owner,
-            cost
-        ).unwrap();
 
         // Log the purchase and conclude the transaction
         evm::log(TokensPurchased {
@@ -185,7 +181,20 @@ impl TokenSaleWithTokenizedVesting {
             amount
         });
 
-        Ok(())
+        // Do the transfer
+        match IERC20::new(self.currency.get()).transfer_from(
+            self,
+            msg::sender(), 
+            owner,
+            cost
+        ) {
+            Ok(transfer_success) => if transfer_success { 
+                Ok(()) 
+            } else { 
+                Err(Errors::TransferFailed(TransferFailed {})) 
+            },
+            Err(_) => Err(Errors::TransferFailed(TransferFailed {}))
+        }
     }
 
     /// Allows a user that purchased tokens to nominate an NFT that is allowed to claim vested tokens if applicable
@@ -265,13 +274,6 @@ impl TokenSaleWithTokenizedVesting {
         self.tokens_claimed.setter(msg::sender()).set(tokens_purchased);
         self.tokens_claimed_at.setter(msg::sender()).set(U256::from(block::timestamp()));
 
-        // Send the user all the tokens that they purchased
-        IERC20::from(IERC20 {address: self.token.get()}).transfer(
-            self,
-            msg::sender(),
-            tokens_purchased
-        ).unwrap();
-
         // Log the amount of tokens sent and conclude the transaction
         evm::log(TokensClaimed {
             user: msg::sender(),
@@ -279,14 +281,19 @@ impl TokenSaleWithTokenizedVesting {
             amount: tokens_purchased
         });
 
-        Ok(())
-    }
-
-    /// Allow the owner to update the price of the token
-    pub fn update_price_per_token(&mut self, new_price_per_token: U256) -> Result<(), Errors> {
-        self.validate_sender_is_owner()?;
-        self.validate_price_per_token(new_price_per_token)?;
-        Ok(())
+        // Send the user all the tokens that they purchased
+        match IERC20::new(self.token.get()).transfer(
+            self,
+            msg::sender(),
+            tokens_purchased
+        ) {
+            Ok(transfer_success) => if transfer_success { 
+                Ok(()) 
+            } else { 
+                Err(Errors::TransferFailed(TransferFailed {})) 
+            },
+            Err(_) => Err(Errors::TransferFailed(TransferFailed {}))
+        }
     }
 
 }
@@ -374,7 +381,11 @@ impl TokenSaleWithTokenizedVesting {
 
     /// Function ensuring msg.sender is the owner of a ERC721 token
     pub fn validate_sender_owns_nft(&mut self, token_id: U256) -> Result<(), Errors> {
-        let owner = IERC721::from(IERC721 {address: self.nft_claim.get()}).owner_of(self, token_id).unwrap();
+        let owner = match IERC721::new(self.nft_claim.get()).owner_of(self, token_id) {
+            Ok(owner) => owner,
+            Err(_) => Address::default()
+        };
+
         if owner != msg::sender() {
             return Err(Errors::OnlyOwner(OnlyOwner {}))
         }
@@ -440,13 +451,6 @@ impl TokenSaleWithTokenizedVesting {
             transfer_amount
         };
 
-        // Transfer the unlocked tokens to the target recipient
-        IERC20::from(IERC20 {address: self.token.get()}).transfer(
-            self,
-            recipient,
-            amount
-        ).unwrap();
-
         // Log the amount of tokens received and distinguish between who paid and who is receiving the tokens
         evm::log(TokensClaimed {
             user,
@@ -454,6 +458,18 @@ impl TokenSaleWithTokenizedVesting {
             amount
         });
 
-        Ok(())
+        // Transfer the unlocked tokens to the target recipient
+        match IERC20::new(self.token.get()).transfer(
+            self,
+            recipient,
+            amount
+        ) {
+            Ok(transfer_success) => if transfer_success { 
+                Ok(()) 
+            } else { 
+                Err(Errors::TransferFailed(TransferFailed {})) 
+            },
+            Err(_) => Err(Errors::TransferFailed(TransferFailed {}))
+        }
     }
 }
