@@ -4,6 +4,8 @@ Fixed-cost token sale contract that focuses on total number of tokens being sold
 
 If token vesting is enabled, users can tokenize the claim of tokens in an NFT allowing the owner of the NFT to have exclusivity on claiming the remaining unlocks (if applicable).
 
+Current deployment: https://sepolia.arbiscan.io/address/0x577341b4b35cef9a9dce44b54ae460e9c9b4653e
+
 ## Quick Start 
 
 Install [Rust](https://www.rust-lang.org/tools/install), and then install the Stylus CLI tool with Cargo
