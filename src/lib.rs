@@ -149,7 +149,7 @@ impl TokenSaleWithTokenizedVesting {
     ///
     /// # Arguments
     ///
-    /// * `amount` - Number of tokens being purchase which will calculate cost
+    /// * `amount` - Number of whole tokens being purchase which will calculate cost
     pub fn purchase_tokens(&mut self, amount: U256) -> Result<(), Errors> {
         // No need to proceed if the contract is not yet initialized
         self.validate_is_initialized()?;
@@ -162,14 +162,15 @@ impl TokenSaleWithTokenizedVesting {
 
         // Check if global limit has been reached
         let total_tokens_purchased = self.total_tokens_purchased.get();
-        if total_tokens_purchased + amount > self.total_tokens_available.get() {
+        let purchase_amount = amount * U256::from(1_i32.pow(18));
+        if total_tokens_purchased + purchase_amount > self.total_tokens_available.get() {
             return Err(Errors::SoldOut(SoldOut {}))
         }
 
         // Record how many tokens user is buying and when they bought it
-        self.tokens_purchased.setter(msg::sender()).set(amount);
+        self.tokens_purchased.setter(msg::sender()).set(purchase_amount);
         self.tokens_purchased_at.setter(msg::sender()).set(U256::from(block::timestamp()));
-        self.total_tokens_purchased.set(total_tokens_purchased + amount);
+        self.total_tokens_purchased.set(total_tokens_purchased + purchase_amount);
 
         // calculate cost
         let cost = amount * self.price_per_token.get();
