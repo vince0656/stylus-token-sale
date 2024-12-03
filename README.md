@@ -4,7 +4,7 @@ Fixed-cost token sale contract that focuses on total number of tokens being sold
 
 If token vesting is enabled, users can tokenize the claim of tokens in an NFT allowing the owner of the NFT to have exclusivity on claiming the remaining unlocks (if applicable).
 
-Current deployment: https://sepolia.arbiscan.io/address/0x577341b4b35cef9a9dce44b54ae460e9c9b4653e
+Current deployment: https://sepolia.arbiscan.io/address/0x6ca4cb7af1abab92897f58b7b93b005f81918c88
 
 ## Quick Start 
 
@@ -152,22 +152,22 @@ The CLI will send 2 transactions to deploy and activate your program onchain.
 
 ```bash
 stripped custom section from user wasm to remove any sensitive data
-contract size: 24.3 KB
-wasm size: 83.2 KB
+contract size: 18.0 KB
+wasm size: 67.2 KB
 File used for deployment hash: ./Cargo.lock
 File used for deployment hash: ./Cargo.toml
 File used for deployment hash: ./rust-toolchain.toml
 File used for deployment hash: ./src/lib.rs
 File used for deployment hash: ./src/main.rs
-project metadata hash computed on deployment: "1060734da220525bb26927b4b88473d9906591398c3943b63b93f97c8ed09e21"
+project metadata hash computed on deployment: "c0ac65acdd571aa1efc49aa9b2697fc1159f359226fcae5d51fdc224952d5fa2"
 stripped custom section from user wasm to remove any sensitive data
-contract size: 24.3 KB
-wasm data fee: 0.000114 ETH
-deployed code at address: 0x577341b4b35cef9a9dce44b54ae460e9c9b4653e
-deployment tx hash: 0xd3c014996f93cb1b6c9b0c8389f2554d78bd856aee5aa6d10cccd2153f1b0aef
-contract activated and ready onchain with tx hash: 0xa0840b6b7bfe2a54022fe7d2cb6149aeaff97e1587698f7fcd7f1b1861e9dbc9
+contract size: 18.0 KB
+wasm data fee: 0.000098 ETH
+deployed code at address: 0x6ca4cb7af1abab92897f58b7b93b005f81918c88
+deployment tx hash: 0xeb1fc21e1349ffd7b2ba4c23b017fb42109ffbdc963fef0255958362d997ad1f
+contract activated and ready onchain with tx hash: 0xb9511383bc1b07b2ea910301b003c68ca99fe2be851cfdfa30bc5cfb21551c0d
 
-NOTE: We recommend running cargo stylus cache bid 577341b4b35cef9a9dce44b54ae460e9c9b4653e 0 to cache your activated contract in ArbOS.
+NOTE: We recommend running cargo stylus cache bid 6ca4cb7af1abab92897f58b7b93b005f81918c88 0 to cache your activated contract in ArbOS.
 Cached contracts benefit from cheaper calls. To read more about the Stylus contract cache, see
 https://docs.arbitrum.io/stylus/concepts/stylus-cache-manager
 ```
